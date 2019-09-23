@@ -5,7 +5,7 @@ import grpc
 
 import kv_pb2
 import kv_pb2_grpc
-from pyraft import log_commands
+import log_commands
 
 
 class KV(object):

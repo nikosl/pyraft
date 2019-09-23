@@ -3,10 +3,11 @@ import random
 import log
 import threading
 import grpc
+from concurrent import futures
 
 import raft_pb2_grpc
 import raft_pb2
-from pyraft import log_entry
+import log_entry
 
 FOLLOWER = 0
 CANDIDATE = 1
@@ -43,6 +44,7 @@ class State(object):
 
         self.withhold_votes_until = _current_milli_time() + self.election_timeout
 
+        self.__pool = futures.ThreadPoolExecutor(max_workers=10)
         self._lock = threading.Lock()
 
     def whois_leader(self):
@@ -134,8 +136,8 @@ class State(object):
 
     def append_entries_to_log(self, log_entries):
         with self._lock:
-            for log_entry in log_entries:
-                self.log.append(log_entry)
+            for entry in log_entries:
+                self.log.append(entry)
 
     def start_election_timeout(self):
         self._election_timer = threading.Timer(self.election_timeout, self.trigger_election)
@@ -169,14 +171,33 @@ class State(object):
             self._heartbeat_timer.cancel()
 
     def send_heartbeat(self):
-        print "heartbeat"
+        self._create_peers_conn()
+        print "send heartbeat"
+        results = {}
+        for peer_id in self.peers:
+            r = self.__pool.submit(
+                self.peers[peer_id].conn.send_append_entries,
+                self.current_term,
+                self.leader_id,
+                self.log.prev_log_index,
+                self.log.prev_log_term,
+                [],
+                self.commit_index
+            )
+            with self._lock:
+                r.add_done_callback(self.__print_result)
+                results[peer_id] = r
+
+    def __print_result(self, result):
+        print "result {}".format(result.result())
 
     def next_state(self, cmd, key, value):
         # only allow heartbeats
+        succ = False
         with self._lock:
             if not self.leader_id == self.my_id:
                 print "This node is not leader"
-                return None
+                succ = False
             self.log.append(log_entry.LogEntry(
                 self.current_term,
                 self.log.last_log_index,
@@ -185,7 +206,8 @@ class State(object):
                 value
             ))
             # send stuff
-        return
+            succ = True
+        return succ
 
     def get_current_leader(self):
         return self.peers[self.leader_id] if self.leader_id > 0 else (0, "nok")
@@ -213,15 +235,25 @@ class State(object):
                 self.step_down()
             hb = False
 
+    def _create_peers_conn(self):
+        for pid in self.peers:
+            if pid != self.my_id:
+                if not self.peers[pid].conn:
+                    self.peers[pid].conn = RaftSender(self.peers[pid].address)
+
 
 class Peer(object):
-    def __init__(self, pid, address, conn):
+    def __init__(self, pid, address):
         self.pid = pid
         self.address = address
-        self.conn = conn
+        self.conn = None
 
-    def set_conn(self, conn):
-        self.conn = conn
+    def conn(self):
+        return self.__conn
+
+    @conn.setter
+    def conn(self, conn):
+        self.__conn = conn
 
 
 class RaftServicer(raft_pb2_grpc.raftServicer):
