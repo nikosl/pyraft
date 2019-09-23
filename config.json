@@ -1,0 +1,8 @@
+{
+    "nodeID":"",
+    "members":[],
+    "me":"",
+    "electionTimeoutMin":100,
+    "electionTimeoutMax":500,
+    "heartbeat":50
+}

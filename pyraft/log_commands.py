@@ -1,0 +1,5 @@
+GET = "get"
+PUT = "put"
+DELETE = "delete"
+KEYS = "keys"
+LEADER = "leader"

@@ -1,0 +1,4 @@
+grpcio
+protobuf
+pytest
+grpcio-tools

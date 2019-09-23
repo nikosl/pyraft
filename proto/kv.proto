@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+service KV {
+  rpc Get(Data) returns (Data) {}
+  rpc Put(Data) returns (Data) {}
+  rpc Delete(Data) returns (Data) {}
+  rpc GetLeader(google.protobuf.Empty) returns (Node) {}
+}
+
+message Data {
+  string key = 1;
+  string value = 2;
+  bool error = 3;
+  string timestamp = 4;
+}
+
+message Node {
+  uint32 id = 1;
+  string address = 2;
+}

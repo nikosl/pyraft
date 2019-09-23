@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+service raft {
+  /* Invoked by candidates to gather votes.
+    1. If term > currentTerm, currentTerm <- term (step down if leader or candidate)
+    2. If term == currentTerm, votedForis null or candidateId, and candidate's log is at least as complete as local log, grant vote and reset election timeout
+   */
+  rpc RequestVote(RequestVoteReq) returns (RequestVoteRes) {}
+
+  /* Invoked by leader to replicate log entries and discover inconsistencies; also used as heartbeat
+    1.Return if term < currentTerm
+    2.If term > currentTerm, currentTerm <- term
+    3.If candidate or leader, step down
+    4.Reset election timeout
+    5.Return failure if log doesn't contain an entry at prevLogIndex
+      whose term matches prevLogTerm
+    6.If existing entries conflict with new entries, delete all existing entries starting with first conflicting entry
+    7.Append any new entries not already in the log
+    8.Advance state machine with newly committed entries
+  */
+  rpc AppendEntries(AppendEntriesReq) returns (stream AppendEntriesRes) {}
+}
+
+message RequestVoteReq {
+  uint32 candidateId = 1; // candidate requesting vote
+  uint64 term = 2; // candidate's term
+  uint32 lastLogIndex = 3; // index of candidate's last log entry
+  uint32 lastLogTerm = 4; // term of candidate's last log entry
+}
+
+message RequestVoteRes {
+  uint64 term = 1; // currentTerm, for candidate to update itself
+  bool voteGranted = 2; // true means candidate received vote
+}
+
+message AppendEntriesReq {
+  uint64 term = 1; // leader's term
+  uint32 leaderId = 2; // so follower can redirect clients
+  uint32 prevLogIndex = 3; // index of log entry immediately preceding new ones
+  uint64 prevLogTerm = 4; // term of prevLogIndexentry
+  repeated LogEntry entries = 5; // log entries to store (empty for heartbeat)
+  uint32 commitIndex = 6; // last entry known to be committed
+}
+
+message AppendEntriesRes {
+  uint64 term = 1; // currentTerm, for leader to update itself
+  bool success = 2; // true if follower contained entry matching prevLogIndex and prevLogTerm
+  uint32 lastLogIndex = 3;
+}
+
+// Each server persists the following to stable storage synchronously before responding to RPCs
+message PersistState {
+  uint64 currentTerm = 1; // latest term server has seen (initialized to 0 on first boot)
+  uint32 votedFor = 2; // candidateId that received vote in current term (or null if none)
+  repeated LogEntry log = 3; // log entries
+}
+
+message Command {
+  string operation = 1;
+  string key = 2;
+  string value = 3;
+}
+
+message LogEntry {
+  uint64 term = 1; // term when entry was received by leader
+  uint32 index = 2; // position of entry in the log
+  Command command = 3; // command for state machine
+}
+

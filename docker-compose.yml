@@ -1,0 +1,33 @@
+version: '3'
+
+services:
+  peer0:
+    build: .
+    hostname: peer0
+    environment:
+      MYID: 1
+      ADDRESS: 0.0.0.0:8001
+      PEERS: 1=0.0.0.0:8001,2=peer1:8002,3=peer2:8003
+    ports:
+      - "8001:8001"
+
+  peer1:
+    build: .
+    hostname: peer1
+    environment:
+      MYID: 2
+      ADDRESS: 0.0.0.0:8002
+      PEERS: 2=0.0.0.0:8002,1=peer0:8001,3=peer2:8003
+    ports:
+      - "8002:8002"
+
+  peer2:
+    build: .
+    hostname: peer2
+    environment:
+      MYID: 3
+      ADDRESS: 0.0.0.0:8003
+      PEERS: 3=0.0.0.0:8003,2=peer1:8002,1=peer0:8001
+    ports:
+      - "8003:8003"
+
