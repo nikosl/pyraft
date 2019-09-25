@@ -37,13 +37,17 @@ def get_leader(server):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Process some integers.')
-    parser.add_argument('-n', action="store", dest='seed', help='cluster node ip:port')
+    parser.add_argument('-b', action="store", dest='seed', help='cluster node ip:port')
     parser.add_argument('-g', dest='gkey', action='store', help='get key value')
     parser.add_argument('-d', dest='dkey', action='store', help='delete key value')
     parser.add_argument('-p', dest='pkey', action='store', help='put key value')
     parser.add_argument('-v', dest='val', action='store', help='value to store')
 
     args = parser.parse_args()
+
+    if not args.seed:
+        parser.print_help()
+        os.exit(1)
 
     logging.basicConfig()
 
@@ -56,7 +60,7 @@ if __name__ == '__main__':
 
     print("Connect to: {}".format(seed))
 
-  #  leader = get_leader(seed)
+    leader = get_leader(seed)
 
     with grpc.insecure_channel(target=seed,
                                options=[('grpc.enable_retries', 0), ('grpc.keepalive_timeout_ms', 1000)]) as channel:

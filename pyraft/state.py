@@ -179,7 +179,6 @@ class State(object):
             self._election_timer.cancel()
 
     def trigger_election(self):
-        logging.info("trigger election")
         self._start_election_event.set()
 
     def has_quorum(self, count):
@@ -213,22 +212,23 @@ class State(object):
                 )
                 results[r] = peer_id
                 try:
-                    for result in futures.as_completed(results, 10.5):
+                    for result in futures.as_completed(results, 100.0):
                         r = result.result()
                         if r:
                             term, success, last_log_index = r
-                            if term <= self.current_term and self.log.last_log_index > last_log_index:
-                                peer_id = results[r]
-                                self.peers[peer_id].con.send_append_entries(
-                                    self.current_term,
-                                    self.leader_id,
-                                    last_log_index,
-                                    self.log.get_term(last_log_index),
-                                    self.log.get_from(last_log_index),
-                                    self.commit_index
-                                )
+                            if not success:
+                                if term <= self.current_term and self.log.last_log_index > last_log_index:
+                                    peer_id = results[result]
+                                    self.peers[peer_id].conn.send_append_entries(
+                                        self.current_term,
+                                        self.leader_id,
+                                        last_log_index,
+                                        self.log.get_term(last_log_index),
+                                        self.log.get_from(last_log_index),
+                                        self.commit_index
+                                    )
                 except Exception as e:
-                    logging.error("got error {}".format(e))
+                    logging.error("got error from remote call {} {}".format(e, result.exception_info()))
 
     def start_election(self):
         voting = {}
@@ -260,10 +260,11 @@ class State(object):
                 if v:
                     votes = votes + 1
         except Exception as e:
-            print("".format(e))
+            logging.error("Error getting votes. {}".format(e))
 
         if self.has_quorum(votes):
             self.reset_election_timeout()
+            self.leader_id = self.my_id
             self.set_state(LEADER)
         else:
             self.step_down()
@@ -292,7 +293,8 @@ class State(object):
         return succ
 
     def get_current_leader(self):
-        return self.leader_id, self.peers[self.leader_id].external_address if self.leader_id > 0 else self.leader_id, 0
+        return (self.leader_id, self.peers[self.leader_id].external_address) if self.leader_id > 0 else (
+            self.leader_id, "")
 
     def set_state(self, state):
         with self._state_lock:
@@ -311,7 +313,7 @@ class State(object):
                     self.reset_election_timeout()
                     while not self._start_election_event.is_set():
                         self._start_election_event.wait()
-                        print "election timeout passed"
+                        logging.info("election timeout passed.")
                     self._start_election_event.clear()
                     self.set_state(CANDIDATE)
                 elif self.is_candidate():
@@ -368,7 +370,7 @@ class RaftServicer(raft_pb2_grpc.raftServicer):
                 log_entry.LogEntryPersist(
                     entry.term,
                     entry.index,
-                    entry.command.cmd,
+                    entry.command.operation,
                     entry.command.key,
                     entry.command.value
                 )
@@ -436,14 +438,15 @@ class RaftSender(object):
                     return None
                 return res.term, res.success, res.lastLogIndex
         except grpc.RpcError as e:
-            logging.error("error sending append entries.", e)
+            if e.code() != grpc.StatusCode.UNAVAILABLE:
+                logging.error("error sending append entries. {}".format(e.details()))
             return None
 
     def send_request_vote(self, candidate_id, term, last_log_index, last_log_term):
         try:
             with grpc.insecure_channel(target=self.address,
                                        options=[('grpc.enable_retries', False),
-                                            ('grpc.keepalive_timeout_ms', 100)]) as channel:
+                                                ('grpc.keepalive_timeout_ms', 100)]) as channel:
                 stub = raft_pb2_grpc.raftStub(channel)
                 res = stub.RequestVote(raft_pb2.RequestVoteReq(
                     candidateId=candidate_id,
@@ -457,5 +460,6 @@ class RaftSender(object):
                     return 0, None
                 return res.term, res.voteGranted
         except grpc.RpcError as e:
-            logging.error("error sending request vote.", e)
+            if e.code() != grpc.StatusCode.UNAVAILABLE:
+                logging.error("error sending request vote {}.".format(e.details()))
             return 0, None

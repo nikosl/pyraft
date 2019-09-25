@@ -6,9 +6,11 @@ services:
     hostname: peer0
     environment:
       MYID: 1
-      ADDRESS: 0.0.0.0:8001
+      ADDRESS: 0.0.0.0:7001
       PEERS: 1=0.0.0.0:8001,2=peer1:8002,3=peer2:8003
+      EXTADDRESS: 1=0.0.0.0:7001,2=peer1:7002,3=peer2:7003
     ports:
+      - "7001:7001"
       - "8001:8001"
 
   peer1:
@@ -16,9 +18,11 @@ services:
     hostname: peer1
     environment:
       MYID: 2
-      ADDRESS: 0.0.0.0:8002
+      ADDRESS: 0.0.0.0:7002
       PEERS: 2=0.0.0.0:8002,1=peer0:8001,3=peer2:8003
+      EXTADDRESS: 2=0.0.0.0:7002,1=peer0:7001,3=peer2:7003
     ports:
+      - "7002:7002"
       - "8002:8002"
 
   peer2:
@@ -26,8 +30,10 @@ services:
     hostname: peer2
     environment:
       MYID: 3
-      ADDRESS: 0.0.0.0:8003
+      ADDRESS: 0.0.0.0:7003
       PEERS: 3=0.0.0.0:8003,2=peer1:8002,1=peer0:8001
+      EXTADDRESS: 3=0.0.0.0:7003,2=peer1:7002,1=peer0:7001
     ports:
+      - "7003:7003"
       - "8003:8003"
 
