@@ -1,3 +1,4 @@
+import logging
 import time
 import random
 import log
@@ -26,8 +27,10 @@ class State(object):
         self.my_id = my_id
         self.peers = peers
         self.election_timeout = _election_timeout()
-        self.leader_id = 0
 
+        self.leader_id = 0
+        if state == LEADER:
+            self.leader_id = self.my_id
         self.state = state
 
         self.current_term = 0
@@ -46,12 +49,20 @@ class State(object):
 
         self.withhold_votes_until = time.time() + self.election_timeout
 
-        self.__pool = futures.ThreadPoolExecutor(max_workers=10)
+        self.__pool = futures.ThreadPoolExecutor(max_workers=10, thread_name_prefix='int_messaging')
         self._lock = threading.RLock()
         self._state_lock = threading.RLock()
 
         self._create_peers_conn()
         self.__server = RaftServicer(self.peers[self.my_id].address, self)
+        logging_format = "%(asctime)s: %(message)s"
+        logging.basicConfig(format=logging_format, level=logging.INFO,
+                            datefmt="%H:%M:%S")
+
+    def register(self, fn):
+        """fn should take a log entry command action and update its state
+        """
+        self._callback = fn
 
     def whois_leader(self):
         return self.peers[self.leader_id] if self.leader_id > 0 else None
@@ -148,6 +159,8 @@ class State(object):
         with self._lock:
             for entry in log_entries:
                 self.log.append(entry)
+                if self._callback:
+                    self._callback(entry)
 
     def start_election_timeout(self):
         self.election_timeout = _election_timeout()
@@ -161,12 +174,12 @@ class State(object):
         self.start_election_timeout()
 
     def stop_election_timeout(self):
-        print "stop election timeout {}".format(self.election_timeout)
+        logging.info("stop election timeout {}".format(self.election_timeout))
         if self._election_timer:
             self._election_timer.cancel()
 
     def trigger_election(self):
-        print "trigger election"
+        logging.info("trigger election")
         self._start_election_event.set()
 
     def has_quorum(self, count):
@@ -175,7 +188,7 @@ class State(object):
     def start_heartbeat(self):
         self.send_append_entries_message([])
         self._heartbeat_timer = threading.Timer(0.07, self.start_heartbeat)
-        self._heartbeat_timer.setName("heartBeatT")
+        self._heartbeat_timer.setName("heartBeatProcess")
         self._heartbeat_timer.start()
 
     def stop_heartbeat(self):
@@ -204,9 +217,7 @@ class State(object):
                         r = result.result()
                         if r:
                             term, success, last_log_index = r
-                            if self.current_term < term and self.log.last_log_index <= last_log_index:
-                                self.step_down()
-                            elif term <= self.current_term and self.log.last_log_index > last_log_index:
+                            if term <= self.current_term and self.log.last_log_index > last_log_index:
                                 peer_id = results[r]
                                 self.peers[peer_id].con.send_append_entries(
                                     self.current_term,
@@ -217,7 +228,7 @@ class State(object):
                                     self.commit_index
                                 )
                 except Exception as e:
-                    print("got error {}".format(e))
+                    logging.error("got error {}".format(e))
 
     def start_election(self):
         voting = {}
@@ -261,11 +272,10 @@ class State(object):
         print "result {}".format(result.result())
 
     def next_state(self, cmd, key, value):
-        # only allow heartbeats
         succ = False
         with self._lock:
             if not self.leader_id == self.my_id:
-                print "This node is not leader"
+                logging.error("This node is not leader")
                 succ = False
             entry = log_entry.LogEntryPersist(
                 self.current_term,
@@ -276,6 +286,8 @@ class State(object):
             )
             self.log.append(entry)
             self.send_append_entries_message([entry])
+            if self._callback:
+                self._callback(entry)
             succ = True
         return succ
 
@@ -294,7 +306,7 @@ class State(object):
         while True:
             while not self._state_change_event.is_set():
                 if self.is_follower():
-                    print "start listen for leader events"
+                    logging.info("state change to FOLLOWER start listen for leader events.")
                     self.stop_heartbeat()
                     self.reset_election_timeout()
                     while not self._start_election_event.is_set():
@@ -303,12 +315,12 @@ class State(object):
                     self._start_election_event.clear()
                     self.set_state(CANDIDATE)
                 elif self.is_candidate():
-                    print "become candidate send request votes"
+                    logging.info("state change to CANDIDATE send request votes.")
                     self.stop_heartbeat()
                     self.reset_election_timeout()
                     self.start_election()
                 elif self.is_leader():
-                    print "become leader"
+                    logging.info("state change to LEADER.")
                     self.stop_election_timeout()
                     self.start_heartbeat()
                     self._state_change_event.wait()
@@ -344,7 +356,7 @@ class RaftServicer(raft_pb2_grpc.raftServicer):
         self.state = state
 
     def serve(self):
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10, thread_name_prefix='protocol'))
         raft_pb2_grpc.add_raftServicer_to_server(self, server)
         server.add_insecure_port(self.address)
         return server
@@ -424,7 +436,7 @@ class RaftSender(object):
                     return None
                 return res.term, res.success, res.lastLogIndex
         except grpc.RpcError as e:
-            print(e.details())
+            logging.error("error sending append entries.", e)
             return None
 
     def send_request_vote(self, candidate_id, term, last_log_index, last_log_term):
@@ -445,5 +457,5 @@ class RaftSender(object):
                     return 0, None
                 return res.term, res.voteGranted
         except grpc.RpcError as e:
-            print(e.details())
+            logging.error("error sending request vote.", e)
             return 0, None
