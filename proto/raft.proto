@@ -18,7 +18,7 @@ service raft {
     7.Append any new entries not already in the log
     8.Advance state machine with newly committed entries
   */
-  rpc AppendEntries(AppendEntriesReq) returns (stream AppendEntriesRes) {}
+  rpc AppendEntries(AppendEntriesReq) returns (AppendEntriesRes) {}
 }
 
 message RequestVoteReq {

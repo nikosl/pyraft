@@ -29,7 +29,6 @@ class KV(object):
 
 class KVServicer(kv_pb2_grpc.KVServicer):
     def __init__(self, address, store, state):
-        super(KVServicer, self).__init__()
         self.address = address
         self.store = store
         self.state = state

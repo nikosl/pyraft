@@ -26,8 +26,7 @@ def delete(stub, key):
 def get_leader(server):
     n = ""
     with grpc.insecure_channel(target=server,
-                               options=[('grpc.enable_retries', 0), ('grpc.keepalive_timeout_ms',
-                                                                     1000)]) as chan:
+                               options=[('grpc.enable_retries', 0), ('grpc.keepalive_timeout_ms', 1000)]) as chan:
         lstub = kv_pb2_grpc.KVStub(chan)
         response = lstub.GetLeader(kv_pb2_grpc.google_dot_protobuf_dot_empty__pb2.Empty())
         print("leader is : {}".format(response))
@@ -57,9 +56,9 @@ if __name__ == '__main__':
 
     print("Connect to: {}".format(seed))
 
-    leader = get_leader(seed)
+  #  leader = get_leader(seed)
 
-    with grpc.insecure_channel(target=leader,
+    with grpc.insecure_channel(target=seed,
                                options=[('grpc.enable_retries', 0), ('grpc.keepalive_timeout_ms', 1000)]) as channel:
         client = kv_pb2_grpc.KVStub(channel)
         if args.gkey:

@@ -14,23 +14,24 @@ CANDIDATE = 1
 LEADER = 2
 
 
-def _current_milli_time():
-    return round(time.time() * 1000)
+def _election_timeout():
+    return random.randrange(150, 500) / float(1000)
 
 
 class State(object):
 
-    def __init__(self, my_id, peers):
+    def __init__(self, my_id, peers, state=FOLLOWER):
+        self._votes = 0
         self._stop_heartbeat = False
         self.my_id = my_id
         self.peers = peers
-        self.election_timeout = random.randrange(150, 500) / float(1000)
-        self.leader_id = -1
+        self.election_timeout = _election_timeout()
+        self.leader_id = 0
 
-        self.state = FOLLOWER
+        self.state = state
 
         self.current_term = 0
-        self.voted_for = -1
+        self.voted_for = 0
 
         self.log = log.Log()
         self._callback = None
@@ -41,23 +42,31 @@ class State(object):
         self._election_timer = None
 
         self._start_election_event = threading.Event()
+        self._state_change_event = threading.Event()
 
-        self.withhold_votes_until = _current_milli_time() + self.election_timeout
+        self.withhold_votes_until = time.time() + self.election_timeout
 
         self.__pool = futures.ThreadPoolExecutor(max_workers=10)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._state_lock = threading.RLock()
+
+        self._create_peers_conn()
+        self.__server = RaftServicer(self.peers[self.my_id].address, self)
 
     def whois_leader(self):
-        return self.peers[self.leader_id] if self.leader_id >= 0 else None
+        return self.peers[self.leader_id] if self.leader_id > 0 else None
 
     def is_leader(self):
-        return self.state == LEADER
+        with self._state_lock:
+            return self.state == LEADER
 
     def is_candidate(self):
-        return self.state == CANDIDATE
+        with self._state_lock:
+            return self.state == CANDIDATE
 
     def is_follower(self):
-        return self.state == FOLLOWER
+        with self._state_lock:
+            return self.state == FOLLOWER
 
     def request_vote_handler(self, candidate_id, term, last_log_index, last_log_term):
         """ Executed by candidates to become leaders
@@ -66,17 +75,17 @@ class State(object):
             3. If request term is bigger step down
         """
         grant_vote = False
-        if self.withhold_votes_until > _current_milli_time():
+        if self.withhold_votes_until > time.time():
             return self.current_term, grant_vote
-
+        self.reset_election_timeout()
         if term > self.current_term:
             self.current_term = term
             self.step_down()
-            self.voted_for = -1
-            self.leader_id = -1
+            self.voted_for = 0
+            self.leader_id = 0
 
         if term == self.current_term:
-            if self.is_log_ok(last_log_index, last_log_term) and self.voted_for == -1:
+            if self.is_log_ok(last_log_index, last_log_term) and self.voted_for == 0:
                 self.step_down()
                 self.reset_election_timeout()
                 self.voted_for = candidate_id
@@ -101,24 +110,25 @@ class State(object):
 
         self.step_down()
 
-        self.withhold_votes_until = _current_milli_time() + self.election_timeout
+        self.withhold_votes_until = time.time() + self.election_timeout
         self.reset_election_timeout()
 
-        if self.leader_id == -1:
+        if self.leader_id == 0:
             self.leader_id = leader_id
 
         if self.log.last_log_index < prev_log_index:
             return self.current_term, False, self.log.last_log_index
 
-        if (self.log.start_log_index <= prev_log_index and
-                self.log.get_entry(prev_log_index).term != prev_log_term):
-            return self.current_term, False, self.log.last_log_index
+        if self.log.start_log_index <= prev_log_index and self.log.get_entry(prev_log_index):
+            if self.log.get_entry(prev_log_index).term != prev_log_term:
+                return self.current_term, False, self.log.last_log_index
 
         self.append_entries_to_log(entries)
         self.commit_index = commit_index
 
-        self.withhold_votes_until = _current_milli_time() + self.election_timeout
+        self.withhold_votes_until = time.time() + self.election_timeout
         self.reset_election_timeout()
+        return self.current_term, True, self.log.last_log_index
 
     def step_down(self):
         if self.is_candidate() or self.is_leader():
@@ -126,7 +136,7 @@ class State(object):
                 self._heartbeat_timer.cancel()
             if self._election_timer:
                 self.reset_election_timeout()
-            self.state = FOLLOWER
+            self.set_state(FOLLOWER)
 
     def has_voted_for(self, candidate_id):
         return not self.voted_for or self.voted_for == candidate_id
@@ -140,14 +150,15 @@ class State(object):
                 self.log.append(entry)
 
     def start_election_timeout(self):
+        self.election_timeout = _election_timeout()
         self._election_timer = threading.Timer(self.election_timeout, self.trigger_election)
         self._election_timer.start()
 
     def reset_election_timeout(self):
-        print "election timeout is {}".format(self.election_timeout)
         if self._election_timer:
             self._election_timer.cancel()
-            self.start_election_timeout()
+            self._start_election_event.clear()
+        self.start_election_timeout()
 
     def stop_election_timeout(self):
         print "stop election timeout {}".format(self.election_timeout)
@@ -162,31 +173,89 @@ class State(object):
         return count >= len(self.peers) / 2 + 1
 
     def start_heartbeat(self):
-        self.send_heartbeat()
+        self.send_append_entries_message([])
         self._heartbeat_timer = threading.Timer(0.07, self.start_heartbeat)
+        self._heartbeat_timer.setName("heartBeatT")
         self._heartbeat_timer.start()
 
     def stop_heartbeat(self):
         if self._heartbeat_timer:
             self._heartbeat_timer.cancel()
 
-    def send_heartbeat(self):
-        self._create_peers_conn()
-        print "send heartbeat"
+    def send_append_entries_message(self, entries):
         results = {}
         for peer_id in self.peers:
-            r = self.__pool.submit(
-                self.peers[peer_id].conn.send_append_entries,
-                self.current_term,
-                self.leader_id,
-                self.log.prev_log_index,
-                self.log.prev_log_term,
-                [],
-                self.commit_index
-            )
-            with self._lock:
-                r.add_done_callback(self.__print_result)
-                results[peer_id] = r
+            if peer_id == self.my_id:
+                continue
+            con = self.peers[peer_id].conn
+            if con:
+                r = self.__pool.submit(
+                    con.send_append_entries,
+                    self.current_term,
+                    self.leader_id,
+                    self.log.prev_log_index,
+                    self.log.prev_log_term,
+                    entries,
+                    self.commit_index
+                )
+                results[r] = peer_id
+                try:
+                    for result in futures.as_completed(results, 10.5):
+                        r = result.result()
+                        if r:
+                            term, success, last_log_index = r
+                            if self.current_term < term and self.log.last_log_index <= last_log_index:
+                                self.step_down()
+                            elif term <= self.current_term and self.log.last_log_index > last_log_index:
+                                peer_id = results[r]
+                                self.peers[peer_id].con.send_append_entries(
+                                    self.current_term,
+                                    self.leader_id,
+                                    last_log_index,
+                                    self.log.get_term(last_log_index),
+                                    self.log.get_from(last_log_index),
+                                    self.commit_index
+                                )
+                except Exception as e:
+                    print("got error {}".format(e))
+
+    def start_election(self):
+        voting = {}
+        self.current_term = self.current_term + 1
+        for peer_id in self.peers:
+            if peer_id == self.my_id:
+                continue
+            con = self.peers[peer_id].conn
+            if con:
+                r = self.__pool.submit(
+                    con.send_request_vote,
+                    self.my_id,
+                    self.current_term,
+                    self.log.last_log_index,
+                    self.log.last_log_term
+                )
+                voting[r] = peer_id
+
+        votes = 1
+        try:
+            for vote in futures.as_completed(voting, 10):
+                if self._start_election_event.is_set():
+                    self._start_election_event.clear()
+                    self.step_down()
+                    for voted in voting:
+                        voted.cancel()
+                    return
+                _, v = vote.result()
+                if v:
+                    votes = votes + 1
+        except Exception as e:
+            print("".format(e))
+
+        if self.has_quorum(votes):
+            self.reset_election_timeout()
+            self.set_state(LEADER)
+        else:
+            self.step_down()
 
     def __print_result(self, result):
         print "result {}".format(result.result())
@@ -198,42 +267,53 @@ class State(object):
             if not self.leader_id == self.my_id:
                 print "This node is not leader"
                 succ = False
-            self.log.append(log_entry.LogEntry(
+            entry = log_entry.LogEntryPersist(
                 self.current_term,
                 self.log.last_log_index,
                 cmd,
                 key,
                 value
-            ))
-            # send stuff
+            )
+            self.log.append(entry)
+            self.send_append_entries_message([entry])
             succ = True
         return succ
 
     def get_current_leader(self):
-        return self.peers[self.leader_id] if self.leader_id > 0 else (0, "nok")
+        return self.leader_id, self.peers[self.leader_id].external_address if self.leader_id > 0 else self.leader_id, 0
+
+    def set_state(self, state):
+        with self._state_lock:
+            self.state = state
+        self._state_change_event.set()
 
     def run(self):
         hb = False
+        server = self.__server.serve()
+        threading.Thread(target=server.start).start()
         while True:
-            if self.is_follower():
-                print "start listen leader events"
-                self.reset_election_timeout()
-                while not self._start_election_event.is_set():
-                    print "wait for heartbeats"
-                    time.sleep(self.election_timeout / 2)
-                self.state = CANDIDATE
-            elif self.is_candidate():
-                print "become candidate send request votes"
-                time.sleep(self.election_timeout)
-                self.state = LEADER
-            elif self.is_leader():
-                if not hb:
+            while not self._state_change_event.is_set():
+                if self.is_follower():
+                    print "start listen for leader events"
+                    self.stop_heartbeat()
+                    self.reset_election_timeout()
+                    while not self._start_election_event.is_set():
+                        self._start_election_event.wait()
+                        print "election timeout passed"
+                    self._start_election_event.clear()
+                    self.set_state(CANDIDATE)
+                elif self.is_candidate():
+                    print "become candidate send request votes"
+                    self.stop_heartbeat()
+                    self.reset_election_timeout()
+                    self.start_election()
+                elif self.is_leader():
                     print "become leader"
+                    self.stop_election_timeout()
                     self.start_heartbeat()
-                    hb = True
-                time.sleep(self.election_timeout * 2)
-                self.step_down()
-            hb = False
+                    self._state_change_event.wait()
+                    self.stop_heartbeat()
+            self._state_change_event.clear()
 
     def _create_peers_conn(self):
         for pid in self.peers:
@@ -243,11 +323,13 @@ class State(object):
 
 
 class Peer(object):
-    def __init__(self, pid, address):
+    def __init__(self, pid, address, external_address):
         self.pid = pid
         self.address = address
+        self.external_address = external_address
         self.conn = None
 
+    @property
     def conn(self):
         return self.__conn
 
@@ -257,49 +339,111 @@ class Peer(object):
 
 
 class RaftServicer(raft_pb2_grpc.raftServicer):
-    def __init__(self):
-        pass
+    def __init__(self, address, state):
+        self.address = address
+        self.state = state
+
+    def serve(self):
+        server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        raft_pb2_grpc.add_raftServicer_to_server(self, server)
+        server.add_insecure_port(self.address)
+        return server
 
     def AppendEntries(self, request, context):
-        pass
+        entries = []
+        for entry in request.entries:
+            entries.append(
+                log_entry.LogEntryPersist(
+                    entry.term,
+                    entry.index,
+                    entry.command.cmd,
+                    entry.command.key,
+                    entry.command.value
+                )
+            )
+        current_term, ok, last_log_index = self.state.append_entries_handler(
+            request.term,
+            request.leaderId,
+            request.prevLogIndex,
+            request.prevLogTerm,
+            entries,
+            request.commitIndex
+        )
+        return raft_pb2.AppendEntriesRes(
+            term=current_term,
+            success=ok,
+            lastLogIndex=last_log_index
+        )
 
     def RequestVote(self, request, context):
-        pass
+        term, vote_granted = self.state.request_vote_handler(
+            request.candidateId,
+            request.term,
+            request.lastLogIndex,
+            request.lastLogTerm
+        )
+
+        return raft_pb2.RequestVoteRes(
+            term=term,
+            voteGranted=vote_granted
+        )
 
 
 class RaftSender(object):
     def __init__(self, address):
         self.address = address
 
-    def send_append_entries(self, term, leader_id, prev_log_index,
+    def send_append_entries(self, term,
+                            leader_id,
+                            prev_log_index,
                             prev_log_term,
                             entries,
                             commit_index):
-        with grpc.insecure_channel(target=self.address,
-                                   options=[('grpc.enable_retries', 3),
-                                            ('grpc.keepalive_timeout_ms', 1000)]) as channel:
-            stub = raft_pb2_grpc.raftStub(channel)
-            msg = raft_pb2.AppendEntriesReq(
-                term=term,
-                leaderId=leader_id,
-                prevLogIndex=prev_log_index,
-                prevLogTerm=prev_log_term,
-                commitIndex=commit_index
-            )
-            msg.entries.extend(entries)
-            res = stub.AppendEntries(msg)
-            return res.term, res.success, res.lastLogIndex
+        try:
+            with grpc.insecure_channel(target=self.address,
+                                       options=[('grpc.enable_retries', False),
+                                                ('grpc.keepalive_timeout_ms', 100)]) as channel:
+
+                stub = raft_pb2_grpc.raftStub(channel)
+
+                msg = raft_pb2.AppendEntriesReq(
+                    term=term,
+                    leaderId=leader_id,
+                    prevLogIndex=prev_log_index,
+                    prevLogTerm=prev_log_term,
+                    commitIndex=commit_index
+                )
+
+                entries_ser = [entry.serialize() for entry in entries]
+                msg.entries.extend(entries_ser)
+
+                res = stub.AppendEntries(msg)
+                try:
+                    res.term
+                except AttributeError:
+                    return None
+                return res.term, res.success, res.lastLogIndex
+        except grpc.RpcError as e:
+            print(e.details())
+            return None
 
     def send_request_vote(self, candidate_id, term, last_log_index, last_log_term):
-        with grpc.insecure_channel(target=self.address,
-                                   options=[('grpc.enable_retries', 3),
-                                            ('grpc.keepalive_timeout_ms', 1000)]) as channel:
-            stub = raft_pb2_grpc.raftStub(channel)
-            res = stub.RequestVote(raft_pb2.RequestVoteReq(
-                candidateId=candidate_id,
-                term=term,
-                lastLogIndex=last_log_index,
-                lastLogTerm=last_log_term
-
-            ))
-            return res.term, res.voteGranted
+        try:
+            with grpc.insecure_channel(target=self.address,
+                                       options=[('grpc.enable_retries', False),
+                                            ('grpc.keepalive_timeout_ms', 100)]) as channel:
+                stub = raft_pb2_grpc.raftStub(channel)
+                res = stub.RequestVote(raft_pb2.RequestVoteReq(
+                    candidateId=candidate_id,
+                    term=term,
+                    lastLogIndex=last_log_index,
+                    lastLogTerm=last_log_term
+                ))
+                try:
+                    res.term
+                except AttributeError:
+                    return 0, None
+                return res.term, res.voteGranted
+        except grpc.RpcError as e:
+            print(e.details())
+            return 0, None

@@ -1,7 +1,7 @@
 import raft_pb2
 
 
-class LogEntry(object):
+class LogEntryPersist(object):
     def __init__(self, term, index, cmd, key, value):
         self.term = term
         self.index = index

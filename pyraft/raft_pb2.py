@@ -20,7 +20,7 @@ DESCRIPTOR = _descriptor.FileDescriptor(
   package='',
   syntax='proto3',
   serialized_options=None,
-  serialized_pb=_b('\n\nraft.proto\"^\n\x0eRequestVoteReq\x12\x13\n\x0b\x63\x61ndidateId\x18\x01 \x01(\r\x12\x0c\n\x04term\x18\x02 \x01(\x04\x12\x14\n\x0clastLogIndex\x18\x03 \x01(\r\x12\x13\n\x0blastLogTerm\x18\x04 \x01(\r\"3\n\x0eRequestVoteRes\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x13\n\x0bvoteGranted\x18\x02 \x01(\x08\"\x8e\x01\n\x10\x41ppendEntriesReq\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x10\n\x08leaderId\x18\x02 \x01(\r\x12\x14\n\x0cprevLogIndex\x18\x03 \x01(\r\x12\x13\n\x0bprevLogTerm\x18\x04 \x01(\x04\x12\x1a\n\x07\x65ntries\x18\x05 \x03(\x0b\x32\t.LogEntry\x12\x13\n\x0b\x63ommitIndex\x18\x06 \x01(\r\"I\n\x10\x41ppendEntriesRes\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x16\n\x0elast_log_index\x18\x03 \x01(\r\"M\n\x0cPersistState\x12\x13\n\x0b\x63urrentTerm\x18\x01 \x01(\x04\x12\x10\n\x08votedFor\x18\x02 \x01(\r\x12\x16\n\x03log\x18\x03 \x03(\x0b\x32\t.LogEntry\"8\n\x07\x43ommand\x12\x11\n\toperation\x18\x01 \x01(\t\x12\x0b\n\x03key\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\"B\n\x08LogEntry\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\r\n\x05index\x18\x02 \x01(\r\x12\x19\n\x07\x63ommand\x18\x03 \x01(\x0b\x32\x08.Command2t\n\x04raft\x12\x31\n\x0bRequestVote\x12\x0f.RequestVoteReq\x1a\x0f.RequestVoteRes\"\x00\x12\x39\n\rAppendEntries\x12\x11.AppendEntriesReq\x1a\x11.AppendEntriesRes\"\x00\x30\x01\x62\x06proto3')
+  serialized_pb=_b('\n\nraft.proto\"^\n\x0eRequestVoteReq\x12\x13\n\x0b\x63\x61ndidateId\x18\x01 \x01(\r\x12\x0c\n\x04term\x18\x02 \x01(\x04\x12\x14\n\x0clastLogIndex\x18\x03 \x01(\r\x12\x13\n\x0blastLogTerm\x18\x04 \x01(\r\"3\n\x0eRequestVoteRes\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x13\n\x0bvoteGranted\x18\x02 \x01(\x08\"\x8e\x01\n\x10\x41ppendEntriesReq\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x10\n\x08leaderId\x18\x02 \x01(\r\x12\x14\n\x0cprevLogIndex\x18\x03 \x01(\r\x12\x13\n\x0bprevLogTerm\x18\x04 \x01(\x04\x12\x1a\n\x07\x65ntries\x18\x05 \x03(\x0b\x32\t.LogEntry\x12\x13\n\x0b\x63ommitIndex\x18\x06 \x01(\r\"G\n\x10\x41ppendEntriesRes\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x14\n\x0clastLogIndex\x18\x03 \x01(\r\"M\n\x0cPersistState\x12\x13\n\x0b\x63urrentTerm\x18\x01 \x01(\x04\x12\x10\n\x08votedFor\x18\x02 \x01(\r\x12\x16\n\x03log\x18\x03 \x03(\x0b\x32\t.LogEntry\"8\n\x07\x43ommand\x12\x11\n\toperation\x18\x01 \x01(\t\x12\x0b\n\x03key\x18\x02 \x01(\t\x12\r\n\x05value\x18\x03 \x01(\t\"B\n\x08LogEntry\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\r\n\x05index\x18\x02 \x01(\r\x12\x19\n\x07\x63ommand\x18\x03 \x01(\x0b\x32\x08.Command2r\n\x04raft\x12\x31\n\x0bRequestVote\x12\x0f.RequestVoteReq\x1a\x0f.RequestVoteRes\"\x00\x12\x37\n\rAppendEntries\x12\x11.AppendEntriesReq\x1a\x11.AppendEntriesRes\"\x00\x62\x06proto3')
 )
 
 
@@ -204,7 +204,7 @@ _APPENDENTRIESRES = _descriptor.Descriptor(
       is_extension=False, extension_scope=None,
       serialized_options=None, file=DESCRIPTOR),
     _descriptor.FieldDescriptor(
-      name='last_log_index', full_name='AppendEntriesRes.last_log_index', index=2,
+      name='lastLogIndex', full_name='AppendEntriesRes.lastLogIndex', index=2,
       number=3, type=13, cpp_type=3, label=1,
       has_default_value=False, default_value=0,
       message_type=None, enum_type=None, containing_type=None,
@@ -223,7 +223,7 @@ _APPENDENTRIESRES = _descriptor.Descriptor(
   oneofs=[
   ],
   serialized_start=308,
-  serialized_end=381,
+  serialized_end=379,
 )
 
 
@@ -267,8 +267,8 @@ _PERSISTSTATE = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=383,
-  serialized_end=460,
+  serialized_start=381,
+  serialized_end=458,
 )
 
 
@@ -312,8 +312,8 @@ _COMMAND = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=462,
-  serialized_end=518,
+  serialized_start=460,
+  serialized_end=516,
 )
 
 
@@ -357,8 +357,8 @@ _LOGENTRY = _descriptor.Descriptor(
   extension_ranges=[],
   oneofs=[
   ],
-  serialized_start=520,
-  serialized_end=586,
+  serialized_start=518,
+  serialized_end=584,
 )
 
 _APPENDENTRIESREQ.fields_by_name['entries'].message_type = _LOGENTRY
@@ -430,8 +430,8 @@ _RAFT = _descriptor.ServiceDescriptor(
   file=DESCRIPTOR,
   index=0,
   serialized_options=None,
-  serialized_start=588,
-  serialized_end=704,
+  serialized_start=586,
+  serialized_end=700,
   methods=[
   _descriptor.MethodDescriptor(
     name='RequestVote',
