@@ -32,6 +32,16 @@ class KVServicer(kv_pb2_grpc.KVServicer):
         self.address = address
         self.store = store
         self.state = state
+        self.register(self.callback)
+
+    def callback(self, action):
+        if action.cmd == log_commands.DELETE:
+            self.store.delete(action.key)
+        elif action.cmd == log_commands.PUT:
+            self.store.put(action.key, action.value)
+
+    def register(self, fn):
+        self.state.register(fn)
 
     def Get(self, request, context):
         val = self.store.get(request.key)
@@ -44,7 +54,6 @@ class KVServicer(kv_pb2_grpc.KVServicer):
 
     def Delete(self, request, context):
         self.state.next_state(log_commands.DELETE, request.key, request.value)
-        self.store.delete(request.key)
         return kv_pb2.Data(
             key=request.key,
             value="",
@@ -54,7 +63,6 @@ class KVServicer(kv_pb2_grpc.KVServicer):
 
     def Put(self, request, context):
         self.state.next_state(log_commands.PUT, request.key, request.value)
-        self.store.put(request.key, request.value)
         return kv_pb2.Data(
             key=request.key,
             value=request.value,
