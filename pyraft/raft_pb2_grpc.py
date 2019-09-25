@@ -19,7 +19,7 @@ class raftStub(object):
         request_serializer=raft__pb2.RequestVoteReq.SerializeToString,
         response_deserializer=raft__pb2.RequestVoteRes.FromString,
         )
-    self.AppendEntries = channel.unary_stream(
+    self.AppendEntries = channel.unary_unary(
         '/raft/AppendEntries',
         request_serializer=raft__pb2.AppendEntriesReq.SerializeToString,
         response_deserializer=raft__pb2.AppendEntriesRes.FromString,
@@ -63,7 +63,7 @@ def add_raftServicer_to_server(servicer, server):
           request_deserializer=raft__pb2.RequestVoteReq.FromString,
           response_serializer=raft__pb2.RequestVoteRes.SerializeToString,
       ),
-      'AppendEntries': grpc.unary_stream_rpc_method_handler(
+      'AppendEntries': grpc.unary_unary_rpc_method_handler(
           servicer.AppendEntries,
           request_deserializer=raft__pb2.AppendEntriesReq.FromString,
           response_serializer=raft__pb2.AppendEntriesRes.SerializeToString,
