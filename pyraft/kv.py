@@ -53,7 +53,7 @@ class KVServicer(kv_pb2_grpc.KVServicer):
         )
 
     def Delete(self, request, context):
-        err = self.state.next_state(log_commands.DELETE, request.key, request.value)
+        err = not self.state.next_state(log_commands.DELETE, request.key, request.value)
         return kv_pb2.Data(
             key=request.key,
             value="",
@@ -62,7 +62,7 @@ class KVServicer(kv_pb2_grpc.KVServicer):
         )
 
     def Put(self, request, context):
-        err = self.state.next_state(log_commands.PUT, request.key, request.value)
+        err = not self.state.next_state(log_commands.PUT, request.key, request.value)
         return kv_pb2.Data(
             key=request.key,
             value=request.value,

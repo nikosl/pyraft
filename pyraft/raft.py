@@ -1,4 +1,4 @@
-import logging
+import logging, platform
 import time
 import random
 import log
@@ -13,6 +13,14 @@ import log_entry
 FOLLOWER = 0
 CANDIDATE = 1
 LEADER = 2
+
+
+class HostnameFilter(logging.Filter):
+    hostname = platform.node()
+
+    def filter(self, record):
+        record.hostname = HostnameFilter.hostname
+        return True
 
 
 def _election_timeout():
@@ -57,9 +65,14 @@ class State(object):
 
         self._create_peers_conn()
         self.__server = RaftServicer(self.peers[self.my_id].address, self)
-        logging_format = "%(asctime)s: %(message)s"
-        logging.basicConfig(format=logging_format, level=logging.INFO,
-                            datefmt="%H:%M:%S")
+
+        handler = logging.StreamHandler()
+        handler.addFilter(HostnameFilter())
+        handler.setFormatter(logging.Formatter('%(asctime)s %(hostname)s: %(thread)d %(thread)s %(message)s'))
+
+        logger = logging.getLogger()
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
 
     def register(self, fn):
         """fn should take a log entry command action and update its state
@@ -70,16 +83,13 @@ class State(object):
         return self.peers[self.leader_id] if self.leader_id > 0 else None
 
     def is_leader(self):
-        with self._state_lock:
-            return self.state == LEADER
+        return self.state == LEADER
 
     def is_candidate(self):
-        with self._state_lock:
-            return self.state == CANDIDATE
+        return self.state == CANDIDATE
 
     def is_follower(self):
-        with self._state_lock:
-            return self.state == FOLLOWER
+        return self.state == FOLLOWER
 
     def request_vote_handler(self, candidate_id, term, last_log_index, last_log_term):
         """ Executed by candidates to become leaders
@@ -87,23 +97,26 @@ class State(object):
             2. If current term is bigger return false
             3. If request term is bigger step down
         """
-        grant_vote = False
-        if self.withhold_votes_until > time.time():
-            return self.current_term, grant_vote
-        self.reset_election_timeout()
-        if term > self.current_term:
-            self.current_term = term
-            self.step_down()
-            self.voted_for = 0
-            self.leader_id = 0
-
-        if term == self.current_term:
-            if self.is_log_ok(last_log_index, last_log_term) and self.voted_for == 0:
+        with self._state_lock:
+            grant_vote = False
+            if self.withhold_votes_until > time.time():
+                return self.current_term, grant_vote
+            self.reset_election_timeout()
+            if term > self.current_term:
+                self.current_term = term
+                logging.debug("step down vote > ")
                 self.step_down()
-                self.reset_election_timeout()
-                self.voted_for = candidate_id
-                grant_vote = True
-        return self.current_term, grant_vote
+                self.voted_for = 0
+                self.leader_id = 0
+
+            if term == self.current_term:
+                if self.is_log_ok(last_log_index, last_log_term) and self.voted_for == 0:
+                    logging.debug("step down vote = ")
+                    self.step_down()
+                    self.reset_election_timeout()
+                    self.voted_for = candidate_id
+                    grant_vote = True
+            return self.current_term, grant_vote
 
     def append_entries_handler(self, term, leader_id, prev_log_index, prev_log_term, entries, commit_index):
         """ 1.Return if term < currentTerm
@@ -115,36 +128,38 @@ class State(object):
             7.Append any new entries not already in the log
             8.Advance state machine with newly committed entries
         """
-        if term < self.current_term:
-            return self.current_term, False, self.log.last_log_index
-
-        if term > self.current_term:
-            self.current_term = term
-
-        self.step_down()
-
-        self.withhold_votes_until = time.time() + self.election_timeout
-        self.reset_election_timeout()
-
-        if self.leader_id == 0:
-            self.leader_id = leader_id
-
-        if self.log.last_log_index < prev_log_index:
-            return self.current_term, False, self.log.last_log_index
-
-        if self.log.start_log_index <= prev_log_index and self.log.get_entry(prev_log_index):
-            if self.log.get_entry(prev_log_index).term != prev_log_term:
+        with self._state_lock:
+            if term < self.current_term:
                 return self.current_term, False, self.log.last_log_index
 
-        self.append_entries_to_log(entries)
-        self.commit_index = commit_index
+            if term > self.current_term:
+                self.current_term = term
 
-        self.withhold_votes_until = time.time() + self.election_timeout
-        self.reset_election_timeout()
-        return self.current_term, True, self.log.last_log_index
+            logging.debug("step down append ")
+            self.step_down()
+
+            self.withhold_votes_until = time.time() + self.election_timeout
+            self.reset_election_timeout()
+
+            if self.leader_id == 0:
+                self.leader_id = leader_id
+
+            if self.log.last_log_index < prev_log_index:
+                return self.current_term, False, self.log.last_log_index
+
+            if self.log.start_log_index <= prev_log_index and self.log.get_entry(prev_log_index):
+                if self.log.get_entry(prev_log_index).term != prev_log_term:
+                    return self.current_term, False, self.log.last_log_index
+
+            self.append_entries_to_log(entries)
+            self.commit_index = commit_index
+
+            self.withhold_votes_until = time.time() + self.election_timeout
+            self.reset_election_timeout()
+            return self.current_term, True, self.log.last_log_index
 
     def step_down(self):
-        if self.is_candidate() or self.is_leader():
+        if not self.is_follower():
             if self._heartbeat_timer:
                 self._heartbeat_timer.cancel()
             if self._election_timer:
@@ -158,7 +173,8 @@ class State(object):
         return self.log.last_log_index <= last_log_index and self.log.last_log_term <= last_log_term
 
     def append_entries_to_log(self, log_entries):
-        logging.info("Append entries {}".format(log_entries))
+        if log_entries:
+            logging.info("Append entries {}".format(log_entries))
         with self._lock:
             for entry in log_entries:
                 self.log.append(entry)
@@ -235,44 +251,50 @@ class State(object):
                 except Exception as e:
                     logging.error("got error from remote call {} {}".format(e, result.exception_info()))
 
+    def _remote_execute_request_votes(self, con):
+        return con.send_request_vote
+
     def start_election(self):
-        voting = {}
         self.current_term = self.current_term + 1
+        votes = 1
+        self.voted_for = self.my_id
+        args = [
+            self.my_id,
+            self.current_term,
+            self.log.last_log_index,
+            self.log.last_log_term
+        ]
+        backoff = 0.05
+        while not self._start_election_event.is_set():
+            try:
+                for result in self._execute_async(self._remote_execute_request_votes, *args):
+                    _, v = result
+                    if v:
+                        votes = votes + 1
+            except Exception as e:
+                logging.error("Error getting votes. {}".format(e))
+
+            if self.has_quorum(votes):
+                logging.info(
+                    "Got {} votes term: {} last log index: {}".format(votes, self.current_term, self.log.last_log_index))
+                self.reset_election_timeout()
+                self.leader_id = self.my_id
+                self.set_state(LEADER)
+                return
+            time.sleep(backoff)
+            backoff = 2 * backoff
+
+    def _execute_async(self, fn, *args):
+        results = {}
         for peer_id in self.peers:
             if peer_id == self.my_id:
                 continue
             con = self.peers[peer_id].conn
             if con:
-                r = self.__pool.submit(
-                    con.send_request_vote,
-                    self.my_id,
-                    self.current_term,
-                    self.log.last_log_index,
-                    self.log.last_log_term
-                )
-                voting[r] = peer_id
-
-        votes = 1
-        try:
-            for vote in futures.as_completed(voting, 10):
-                if self._start_election_event.is_set():
-                    self._start_election_event.clear()
-                    self.step_down()
-                    for voted in voting:
-                        voted.cancel()
-                    return
-                _, v = vote.result()
-                if v:
-                    votes = votes + 1
-        except Exception as e:
-            logging.error("Error getting votes. {}".format(e))
-
-        if self.has_quorum(votes):
-            self.reset_election_timeout()
-            self.leader_id = self.my_id
-            self.set_state(LEADER)
-        else:
-            self.step_down()
+                r = self.__pool.submit(fn(con), *args)
+                results[r] = peer_id
+            for r in futures.as_completed(results, 10):
+                yield r.result()
 
     def __print_result(self, result):
         print "result {}".format(result.result())
@@ -301,13 +323,13 @@ class State(object):
             self.leader_id, "")
 
     def set_state(self, state):
-        with self._state_lock:
-            self.state = state
+        self.state = state
         self._state_change_event.set()
+        logging.info("trigger change state")
 
     def run(self):
         self._srv_inst = self.__server.serve()
-        threading.Thread(target=self._srv_inst.start).start()
+        self._srv_inst.start()
         self._running = True
         while self._running:
             while not self._state_change_event.is_set():
@@ -326,11 +348,11 @@ class State(object):
                     self.reset_election_timeout()
                     self.start_election()
                 elif self.is_leader():
+                    self._state_change_event.clear()
                     logging.info("state change to LEADER.")
                     self.stop_election_timeout()
                     self.start_heartbeat()
                     self._state_change_event.wait()
-                    self.stop_heartbeat()
             self._state_change_event.clear()
 
     def _create_peers_conn(self):
