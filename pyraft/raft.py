@@ -22,6 +22,8 @@ def _election_timeout():
 class State(object):
 
     def __init__(self, my_id, peers, state=FOLLOWER):
+        self._srv_inst = None
+        self._running = False
         self._votes = 0
         self._stop_heartbeat = False
         self.my_id = my_id
@@ -156,6 +158,7 @@ class State(object):
         return self.log.last_log_index <= last_log_index and self.log.last_log_term <= last_log_term
 
     def append_entries_to_log(self, log_entries):
+        logging.info("Append entries {}".format(log_entries))
         with self._lock:
             for entry in log_entries:
                 self.log.append(entry)
@@ -219,12 +222,14 @@ class State(object):
                             if not success:
                                 if term <= self.current_term and self.log.last_log_index > last_log_index:
                                     peer_id = results[result]
+                                    missing = self.log.get_from(last_log_index)
+                                    logging.info("Send missing entries {} to {}".format(missing, peer_id))
                                     self.peers[peer_id].conn.send_append_entries(
                                         self.current_term,
                                         self.leader_id,
                                         last_log_index,
                                         self.log.get_term(last_log_index),
-                                        self.log.get_from(last_log_index),
+                                        missing,
                                         self.commit_index
                                     )
                 except Exception as e:
@@ -273,11 +278,10 @@ class State(object):
         print "result {}".format(result.result())
 
     def next_state(self, cmd, key, value):
-        succ = False
         with self._lock:
             if not self.leader_id == self.my_id:
                 logging.error("This node is not leader")
-                succ = False
+                return False
             entry = log_entry.LogEntryPersist(
                 self.current_term,
                 self.log.last_log_index,
@@ -285,12 +289,12 @@ class State(object):
                 key,
                 value
             )
+            logging.info("Append new entry {}".format(entry))
             self.log.append(entry)
             self.send_append_entries_message([entry])
             if self._callback:
                 self._callback(entry)
-            succ = True
-        return succ
+        return True
 
     def get_current_leader(self):
         return (self.leader_id, self.peers[self.leader_id].external_address) if self.leader_id > 0 else (
@@ -302,10 +306,10 @@ class State(object):
         self._state_change_event.set()
 
     def run(self):
-        hb = False
-        server = self.__server.serve()
-        threading.Thread(target=server.start).start()
-        while True:
+        self._srv_inst = self.__server.serve()
+        threading.Thread(target=self._srv_inst.start).start()
+        self._running = True
+        while self._running:
             while not self._state_change_event.is_set():
                 if self.is_follower():
                     logging.info("state change to FOLLOWER start listen for leader events.")
@@ -334,6 +338,10 @@ class State(object):
             if pid != self.my_id:
                 if not self.peers[pid].conn:
                     self.peers[pid].conn = RaftSender(self.peers[pid].address)
+
+    def stop(self):
+        self._running = False
+        self._srv_inst.stop(0)
 
 
 class Peer(object):

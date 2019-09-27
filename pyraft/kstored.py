@@ -2,7 +2,7 @@ import os
 import time
 
 import kv
-import state
+import raft
 import threading
 
 _ONE_DAY_IN_SECONDS = 60 * 60 * 24
@@ -33,20 +33,23 @@ if __name__ == '__main__':
                 ext_peer_id, _ext_addr = ext.split('=')
                 if ext_peer_id == peer_id:
                     ext_addr = _ext_addr
-            peers[int(peer_id)] = state.Peer(
+            peers[int(peer_id)] = raft.Peer(
                 peer_id,
                 addr,
                 ext_addr
             )
 
-    st = state.State(int(MY_ID), peers, int(STATE))
+    st = raft.State(int(MY_ID), peers, int(STATE))
     kvserver = kv.KVServicer(MY_ADDRESS, store, st)
     server = kv.serve(kvserver)
-    threading.Thread(target=st.run).start()
-    threading.Thread(target=server.start).start()
+    raft_srv = threading.Thread(target=st.run)
+    raft_srv.start()
+    nb_srv = threading.Thread(target=server.start)
+    nb_srv.start()
 
     try:
         while True:
             time.sleep(_ONE_DAY_IN_SECONDS)
     except KeyboardInterrupt:
         server.stop(0)
+        st.stop()
