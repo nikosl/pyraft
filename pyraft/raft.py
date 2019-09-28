@@ -68,7 +68,7 @@ class State(object):
 
         handler = logging.StreamHandler()
         handler.addFilter(HostnameFilter())
-        handler.setFormatter(logging.Formatter('%(asctime)s %(hostname)s: %(thread)d %(thread)s %(message)s'))
+        handler.setFormatter(logging.Formatter('%(asctime)s %(hostname)s: %(message)s'))
 
         logger = logging.getLogger()
         logger.addHandler(handler)
@@ -104,14 +104,14 @@ class State(object):
             self.reset_election_timeout()
             if term > self.current_term:
                 self.current_term = term
-                logging.debug("step down vote > ")
+                logging.debug("step down remote term is bigger")
                 self.step_down()
                 self.voted_for = 0
                 self.leader_id = 0
 
             if term == self.current_term:
                 if self.is_log_ok(last_log_index, last_log_term) and self.voted_for == 0:
-                    logging.debug("step down vote = ")
+                    logging.debug("vote for {}".format(candidate_id))
                     self.step_down()
                     self.reset_election_timeout()
                     self.voted_for = candidate_id
@@ -135,7 +135,6 @@ class State(object):
             if term > self.current_term:
                 self.current_term = term
 
-            logging.debug("step down append ")
             self.step_down()
 
             self.withhold_votes_until = time.time() + self.election_timeout
@@ -173,10 +172,9 @@ class State(object):
         return self.log.last_log_index <= last_log_index and self.log.last_log_term <= last_log_term
 
     def append_entries_to_log(self, log_entries):
-        if log_entries:
-            logging.info("Append entries {}".format(log_entries))
         with self._lock:
             for entry in log_entries:
+                logging.info("Append entry {}".format(entry))
                 self.log.append(entry)
                 if self._callback:
                     self._callback(entry)
@@ -239,7 +237,7 @@ class State(object):
                                 if term <= self.current_term and self.log.last_log_index > last_log_index:
                                     peer_id = results[result]
                                     missing = self.log.get_from(last_log_index)
-                                    logging.info("Send missing entries {} to {}".format(missing, peer_id))
+                                    logging.info("Send missing entries: [{}] to peer: {}".format(missing.join(", "), peer_id))
                                     self.peers[peer_id].conn.send_append_entries(
                                         self.current_term,
                                         self.leader_id,
@@ -267,10 +265,14 @@ class State(object):
         backoff = 0.05
         while not self._start_election_event.is_set():
             try:
-                for result in self._execute_async(self._remote_execute_request_votes, *args):
-                    _, v = result
-                    if v:
-                        votes = votes + 1
+                voted = []
+                for pid, result in self._execute_async(self._remote_execute_request_votes, *args):
+                    t, v = result
+                    if v and t == self.current_term:
+                        if pid not in voted:
+                            votes = votes + 1
+                            logging.debug("Got vote from {}".format(pid))
+                            voted.append(pid)
             except Exception as e:
                 logging.error("Error getting votes. {}".format(e))
 
@@ -283,6 +285,7 @@ class State(object):
                 return
             time.sleep(backoff)
             backoff = 2 * backoff
+        self._start_election_event.clear()
 
     def _execute_async(self, fn, *args):
         results = {}
@@ -294,7 +297,7 @@ class State(object):
                 r = self.__pool.submit(fn(con), *args)
                 results[r] = peer_id
             for r in futures.as_completed(results, 10):
-                yield r.result()
+                yield results[r], r.result()
 
     def __print_result(self, result):
         print "result {}".format(result.result())
@@ -325,7 +328,7 @@ class State(object):
     def set_state(self, state):
         self.state = state
         self._state_change_event.set()
-        logging.info("trigger change state")
+        logging.info("trigger change state to {}".format(state))
 
     def run(self):
         self._srv_inst = self.__server.serve()
@@ -344,9 +347,11 @@ class State(object):
                     self.set_state(CANDIDATE)
                 elif self.is_candidate():
                     logging.info("state change to CANDIDATE send request votes.")
-                    self.stop_heartbeat()
-                    self.reset_election_timeout()
-                    self.start_election()
+                    while self.is_candidate():
+                        self.stop_heartbeat()
+                        self.reset_election_timeout()
+                        logging.debug("start new election.")
+                        self.start_election()
                 elif self.is_leader():
                     self._state_change_event.clear()
                     logging.info("state change to LEADER.")
@@ -364,6 +369,7 @@ class State(object):
     def stop(self):
         self._running = False
         self._srv_inst.stop(0)
+        self._state_change_event.set()
 
 
 class Peer(object):
