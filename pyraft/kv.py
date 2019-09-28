@@ -1,5 +1,6 @@
 from concurrent import futures
 import threading
+import socket
 
 import grpc
 
@@ -72,9 +73,13 @@ class KVServicer(kv_pb2_grpc.KVServicer):
 
     def GetLeader(self, request, context):
         lid, address = self.state.get_current_leader()
+        try:
+            ip = socket.gethostbyname(address)
+        except socket.error:
+            ip = address
         return kv_pb2.Node(
             id=lid,
-            address=address
+            address=ip
         )
 
 
