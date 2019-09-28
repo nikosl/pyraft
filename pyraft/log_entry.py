@@ -12,11 +12,7 @@ class LogEntryPersist(object):
         self.is_empty = False
 
     def __str__(self):
-        return """term: {self.term} \
-            index: {self.index} \
-            command: {self.cmd} \
-            key: {self.key} \
-            value: {self.value}""".format(self=self)
+        return "term: {self.term} index: {self.index} command: {self.cmd} key: {self.key} value: {self.value}".format(self=self)
 
     def serialize(self):
         return raft_pb2.LogEntry(
