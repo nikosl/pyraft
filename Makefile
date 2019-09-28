@@ -17,7 +17,16 @@ docker_build:
 docker_start:
 	docker run -it kvserviced
 
-start_local_cluster:
+compose_clean:
+	docker-compose rm -sf
+
+compose_build: compose_clean
+	docker-compose build
+
+stop_cluster:
+	docker-compose down
+
+start_cluster: compose_build
 	docker-compose up
 
 clean:
@@ -25,5 +34,7 @@ clean:
 
 cleanpyc:
 	rm -rf ./pyraft/*.pyc
+
+all: proto compose-build
 
 .PHONY: cleanpyc
